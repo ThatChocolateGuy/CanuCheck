@@ -11,6 +11,6 @@ Built to support ethical shopping and Canadian manufacturing, featuring:
 - Model Context Protocol for reliable AI tooling
 - Type-safe API interactions
 - Responsive card/list views
-- Open contribution ecosystem
+- Open contribution ecosystem (coming soon)
 
 "Because 'Made in Canada' should mean something"
