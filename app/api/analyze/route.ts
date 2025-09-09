@@ -99,14 +99,56 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }
   try {
-    // Validate and sanitize input
+    // Parse request body
     const rawBody = await req.json();
+
+    // Validate required fields are present and non-empty
+    const requiredFields = {
+      productId: rawBody.productId,
+      name: rawBody.name,
+      description: rawBody.description,
+      url: rawBody.url,
+      price: rawBody.price
+    };
+
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, value]) => value === undefined || value === null || value === '')
+      .map(([field]) => field);
+
+    if (missingFields.length > 0) {
+      return NextResponse.json({
+        error: 'Validation failed',
+        details: `Missing required fields: ${missingFields.join(', ')}`
+      }, { status: 400 });
+    }
+
+    // Type check numeric fields
+    if (typeof rawBody.price !== 'number' || isNaN(rawBody.price)) {
+      return NextResponse.json({
+        error: 'Validation failed',
+        details: 'Price must be a valid number'
+      }, { status: 400 });
+    }
+
+    // Validate URL format
+    try {
+      new URL(rawBody.url);
+    } catch {
+      return NextResponse.json({
+        error: 'Validation failed',
+        details: 'Invalid URL format'
+      }, { status: 400 });
+    }
+
+    // Only sanitize after validation
     const sanitizedBody = {
       ...rawBody,
-      name: sanitizeInput(rawBody.name || ''),
-      description: sanitizeInput(rawBody.description || ''),
-      url: sanitizeInput(rawBody.url || ''),
+      name: sanitizeInput(rawBody.name),
+      description: sanitizeInput(rawBody.description),
+      url: sanitizeInput(rawBody.url),
     };
+    
+    // Schema validation as final check
     const input = analysisSchema.parse(sanitizedBody)
 
     // Validate required environment variables at startup
@@ -164,16 +206,48 @@ export async function POST(req: Request) {
     })
 
     const rawAnalysis = completion.choices[0].message.content
-    if (!rawAnalysis) throw new Error("No analysis content")
+    if (!rawAnalysis) {
+      console.error("Model returned empty response")
+      return NextResponse.json(
+        { error: "Model returned empty response" },
+        { status: 500 }
+      )
+    }
 
-    const parsedAnalysis = JSON.parse(rawAnalysis)
-    const validatedAnalysis = responseSchema.parse(parsedAnalysis)
+    // First try to parse the raw JSON
+    let parsedAnalysis
+    try {
+      parsedAnalysis = JSON.parse(rawAnalysis)
+    } catch (parseError) {
+      console.error("Failed to parse model JSON response:", parseError)
+      console.error("Raw response:", rawAnalysis)
+      return NextResponse.json(
+        { 
+          error: "Failed to parse model JSON response",
+          details: parseError instanceof Error ? parseError.message : "Invalid JSON"
+        },
+        { status: 500 }
+      )
+    }
 
-    return NextResponse.json({
-      ...validatedAnalysis,
-      source: completion.model,
-      productId: input.productId
-    })
+    // Then validate the schema
+    try {
+      const validatedAnalysis = responseSchema.parse(parsedAnalysis)
+      return NextResponse.json({
+        ...validatedAnalysis,
+        source: completion.model,
+        productId: input.productId
+      })
+    } catch (validationError) {
+      console.error("Invalid response schema:", validationError)
+      return NextResponse.json(
+        { 
+          error: "Model response failed validation",
+          details: validationError instanceof Error ? validationError.message : "Invalid schema"
+        },
+        { status: 500 }
+      )
+    }
 
   } catch (error) {
     console.error("Analysis failed:", error)
