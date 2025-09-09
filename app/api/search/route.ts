@@ -198,12 +198,27 @@ async function fetchProducts(query: string) {
 }
 
 // HTTP Status Code Check function
-async function checkValidURLStatus(url: string): Promise<boolean> {
+async function checkValidURLStatus(url: string, timeoutMs: number = 3000): Promise<boolean> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+    const response = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
     return response.ok;
   } catch (error) {
-    console.error(`Error checking URL status: ${url}`, error);
+    clearTimeout(timeoutId);
+    if (error instanceof Error) {
+      const isAbortError = error.name === 'AbortError';
+      console.error(
+        `Error checking URL status: ${url}`,
+        isAbortError ? `Request timed out after ${timeoutMs}ms` : error.message
+      );
+    }
     return false;
   }
 }

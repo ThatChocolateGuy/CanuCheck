@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { z } from 'zod'
+import { verifyApiKey, verifyJWT, extractBearerToken } from '@/lib/auth'
 
 const analysisSchema = z.object({
   productId: z.string(),
@@ -30,7 +31,7 @@ function getClientKey(req: Request): string {
   const forwarded = req.headers.get('x-forwarded-for')
   const realIp = req.headers.get('x-real-ip')
   const ip = forwarded?.split(',')[0] || realIp || 'unknown'
-  
+
   // Include API key in rate limit key if present to separate authenticated requests
   const apiKey = req.headers.get('x-api-key')
   return apiKey ? `${ip}:${apiKey}` : ip
@@ -48,29 +49,48 @@ function sanitizeInput(str: string): string {
 
 export async function POST(req: Request) {
   // --- API Key/JWT Authentication ---
-  // Removed duplicate apiKey declaration
-  const authHeader = req.headers.get('authorization');
-  const validApiKey = process.env.API_KEY;
+  const apiKey = req.headers.get('x-api-key')
+  const authHeader = req.headers.get('authorization')
 
-  // Constant-time string comparison to prevent timing attacks
-  function constantTimeEqual(a: string, b: string): boolean {
-    if (a.length !== b.length) return false;
-    let result = 0;
-    for (let i = 0; i < a.length; i++) {
-      result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  // If API key auth is configured, check x-api-key header
+  if (process.env.API_KEY) {
+    if (apiKey) {
+      if (!verifyApiKey(apiKey, process.env.API_KEY)) {
+        return NextResponse.json(
+          { error: 'Unauthorized: Invalid API key' },
+          { status: 401 }
+        )
+      }
+      // Valid API key, proceed
+    } else if (!authHeader) {
+      // No API key and no auth header when API key auth is configured
+      return NextResponse.json(
+        { error: 'Unauthorized: API key required' },
+        { status: 401 }
+      )
     }
-    return result === 0;
   }
 
-  // --- API Key/JWT Authentication ---
-  const apiKey = req.headers.get('x-api-key');
-  // For JWT, you would verify the token here (not implemented for brevity)
-  if (!apiKey && !authHeader) {
-    return NextResponse.json({ error: 'Unauthorized: Missing API key or token' }, { status: 401 });
+  // If JWT auth is configured, verify Authorization header
+  if (process.env.JWT_SECRET) {
+    const token = extractBearerToken(authHeader)
+    if (!token) {
+      return NextResponse.json(
+        { error: 'Unauthorized: Bearer token required' },
+        { status: 401 }
+      )
+    }
+
+    const authResult = await verifyJWT(token, process.env.JWT_SECRET)
+    if (!authResult.authenticated) {
+      return NextResponse.json(
+        { error: `Unauthorized: ${authResult.error || 'Invalid token'}` },
+        { status: 401 }
+      )
+    }
   }
-  if (validApiKey && apiKey && !constantTimeEqual(apiKey, validApiKey)) {
-    return NextResponse.json({ error: 'Unauthorized: Invalid API key' }, { status: 401 });
-  }
+
+  // If we reach here, authentication was successful
 
   // --- Rate Limiting ---
   const clientKey = getClientKey(req);
@@ -89,13 +109,19 @@ export async function POST(req: Request) {
     };
     const input = analysisSchema.parse(sanitizedBody)
 
+    // Validate required environment variables at startup
     if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY environment variable is not set")
+      throw new Error("OPENAI_API_KEY environment variable is required")
+    }
+
+    // At least one auth method must be configured
+    if (!process.env.API_KEY && !process.env.JWT_SECRET) {
+      throw new Error("Either API_KEY or JWT_SECRET environment variable must be configured for authentication")
     }
 
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY
-    })
+    });
 
     const prompt = `
       Analyze manufacturing origins for product: ${input.name}
