@@ -12,10 +12,8 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 })
 
-let query: string | null = null
-
 // Mock implementation for demonstration
-async function searchEcommerceAPIs(query: string | null): Promise<EcommerceProduct[]> {
+async function searchEcommerceAPIs(query: string): Promise<EcommerceProduct[]> {
   // Replace with actual API calls to:
   // - Shopify API
   // - Amazon Product Advertising API
@@ -39,10 +37,11 @@ async function searchEcommerceAPIs(query: string | null): Promise<EcommerceProdu
 }
 
 async function mergeResults(
-  results: [EcommerceProduct[], OpenAI.Responses.Response]
+  results: [EcommerceProduct[], OpenAI.Responses.Response],
+  query: string
 ): Promise<EcommerceProduct[]> {
   const [ecommerceResults, llmResponse] = results
-  const llmProducts = await parseLLMResponse(llmResponse, openai, query ?? '')
+  const llmProducts = await parseLLMResponse(llmResponse, openai, query)
   // console.log('LLM products:', llmProducts)
 
   // Deduplicate and combine results
@@ -118,7 +117,7 @@ async function parseLLMResponse(
   }
 }
 
-async function fetchProducts(query: string | null) {
+async function fetchProducts(query: string) {
   const response = await openai.responses.create({
     model: "gpt-5-mini",
     tools: [
@@ -194,17 +193,17 @@ async function checkValidURLStatus(url: string): Promise<boolean> {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
-  query = searchParams.get('q')
+  const searchQuery = searchParams.get('q') ?? ''
 
   // Hybrid search pattern
   const results = await Promise.all([
-    searchEcommerceAPIs(query),
-    fetchProducts(query)
+    searchEcommerceAPIs(searchQuery),
+    fetchProducts(searchQuery)
   ])
 
   // console.log('Ecommerce results:', results[0])
   // console.log('LLM response:', results[1])
-  const mergedResults = await mergeResults(results);
+  const mergedResults = await mergeResults(results, searchQuery);
   console.log('Merged results:', mergedResults)
   return NextResponse.json(mergedResults);
 }
