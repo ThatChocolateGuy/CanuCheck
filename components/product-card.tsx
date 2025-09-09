@@ -12,6 +12,21 @@ export function ProductCard({
 }: {
   product: EcommerceProduct
 }) {
+  // Safely validate and open external product URLs
+  const openProductUrlSafely = () => {
+    try {
+      const url = new URL(product.url);
+      const allowed = new Set(["http:", "https:"]);
+      if (!allowed.has(url.protocol)) {
+        console.warn("Blocked navigation to disallowed protocol:", url.protocol);
+        return;
+      }
+      const newWin = window.open(url.toString(), '_blank', 'noopener,noreferrer');
+      if (newWin) newWin.opener = null; // extra safety
+    } catch (e) {
+      console.warn("Invalid product URL, navigation aborted:", product.url, e);
+    }
+  }
   return (
     <Card className="hover:shadow-lg transition-shadow">
       <CardHeader>
@@ -41,7 +56,7 @@ export function ProductCard({
         <Button
           variant="outline"
           className="w-full"
-          onClick={() => window.open(product.url, '_blank')}
+          onClick={openProductUrlSafely}
         >
           View Product
         </Button>
