@@ -1,75 +1,88 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { ProductCard } from "@/components/product-card";
-import { GridIcon, ListIcon } from "lucide-react";
-import { Product } from "@/types";
+import { useMCP } from "@/lib/mcp"
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { GridIcon, ListIcon, SearchIcon } from "lucide-react"
+import { useEffect, useState } from "react"
+import { ProductGrid } from "./product-grid"
+import { Spinner } from "./ui/spinner"
 
 export function ProductSearch() {
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [products, setProducts] = useState<Product[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const { query, results, search, analyze, analysis, isLoading } = useMCP()
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+  const [localQuery, setLocalQuery] = useState("")
 
-  const handleSearch = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch(`/api/search?query=${encodeURIComponent(searchQuery)}`);
-      const data = await response.json();
-      setProducts(data);
-    } catch (error) {
-      console.error("Search failed:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Initial search for demonstration
+  // useEffect(() => {
+  //   search("")
+  // }, [search])
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    search(localQuery)
+  }
+
+  const hasResults = results.length > 0
 
   return (
-    <div className="container max-w-6xl py-8">
-      <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center">
-        <div className="flex flex-1 gap-2">
-          <Input
-            placeholder="Search Canadian products..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          />
-          <Button onClick={handleSearch} disabled={isLoading}>
-            {isLoading ? "Searching..." : "Search"}
+    <div className={`${!hasResults ? 'min-h-[70vh] flex flex-col justify-center' : 'space-y-8'}`}>
+      {/* Search Bar */}
+      <form 
+        onSubmit={handleSubmit} 
+        className={`
+          flex gap-2
+          ${!hasResults ? 'max-w-2xl mx-auto w-full flex-col space-y-4 p-8' : ''}
+        `}
+      >
+        <Input
+          placeholder="Search Canadian products..."
+          value={localQuery}
+          onChange={(e) => setLocalQuery(e.target.value)}
+          className={`flex-1 ${!hasResults ? 'h-14 text-lg' : ''}`}
+        />
+        <div className="flex gap-2">
+          <Button 
+            type="submit"
+            className={cn(
+              'gap-2',
+              !hasResults ? 'flex-1 h-12' : ''
+            )}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <>
+                <Spinner /> Searching...
+              </>
+            ) : (
+              <>
+                <SearchIcon className="h-4 w-4" /> Search
+              </>
+            )}
           </Button>
-        </div>
-        <ToggleGroup
-          type="single"
-          value={viewMode}
-          onValueChange={(value) => setViewMode(value as "grid" | "list")}
-          variant="outline"
-        >
-          <ToggleGroupItem value="grid" aria-label="Grid view">
-            <GridIcon className="h-4 w-4" />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="list" aria-label="List view">
-            <ListIcon className="h-4 w-4" />
-          </ToggleGroupItem>
-        </ToggleGroup>
-      </div>
 
-      {products.length > 0 ? (
-        <div className={viewMode === "grid" 
-          ? "grid gap-6 md:grid-cols-2 lg:grid-cols-3" 
-          : "space-y-6"
-        }>
-          {products.map((product) => (
-            <ProductCard key={product.id} product={product} />
-          ))}
+          {hasResults && (
+            <ToggleGroup
+              type="single"
+              value={viewMode}
+              onValueChange={(value) => setViewMode(value as "grid" | "list")}
+              variant="outline"
+            >
+              <ToggleGroupItem value="grid">
+                <GridIcon className="h-4 w-4" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="list">
+                <ListIcon className="h-4 w-4" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )}
         </div>
-      ) : (
-        <div className="flex min-h-[400px] items-center justify-center text-muted-foreground">
-          {isLoading ? "Loading products..." : "No products found"}
-        </div>
-      )}
+      </form>
+
+      {/* Results */}
+      <ProductGrid viewMode={viewMode} isLoading={isLoading} />
     </div>
-  );
+  )
 }

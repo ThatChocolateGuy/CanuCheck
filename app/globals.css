@@ -1,16 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* Flag icons sizing */
-.fi {
-  width: 1.5em;
-  height: 1.5em;
-  border-radius: 2px;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
-}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -130,4 +119,8 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+.container {
+  @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
 }

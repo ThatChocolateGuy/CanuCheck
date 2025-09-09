@@ -1,10 +1,8 @@
 # CanuCheck 🤖🍁 - Your Smart Canadian Product Explorer
 
-Discover truly Canadian-made goods with AI verification. Combines:
-- ✅ Real-time LLM-powered origin analysis
-- ✅ 50%+ Canadian content requirement
+Discover Canadian-made goods easily. Combines:
 - 🇨🇦 Flag-based manufacturing transparency
-- 🛒 Direct links to purchase verified products
+- 🛒 Direct links to purchase products
 - ⚡ Modern stack (Next.js + shadcn/ui + OpenAI)
 
 Built to support ethical shopping and Canadian manufacturing, featuring:
