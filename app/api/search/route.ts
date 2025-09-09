@@ -71,8 +71,25 @@ async function parseLLMResponse(
       const isValidProductUrl = await checkValidURLStatus(product.url);
       const isValidImageUrls = await Promise.all((product.images ?? []).map(checkValidURLStatus));
       const allImagesValidFileTypes = (product.images ?? []).every((imageUrl) => {
-        const validImageFileTypes = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'];
-        return validImageFileTypes.some((fileType) => imageUrl.endsWith(fileType));
+        const validImageFileTypes = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
+        try {
+          // Try parsing as full URL first
+          const url = new URL(imageUrl);
+          // Get the pathname and extract extension
+          const pathname = url.pathname.toLowerCase();
+          const extension = pathname.substring(pathname.lastIndexOf('.')) || '';
+          return validImageFileTypes.has(extension);
+        } catch {
+          // If URL parsing fails, try parsing just the path portion
+          try {
+            const path = decodeURIComponent(imageUrl.split('?')[0].toLowerCase());
+            const extension = path.substring(path.lastIndexOf('.')) || '';
+            return validImageFileTypes.has(extension);
+          } catch {
+            // If all parsing fails, consider it invalid
+            return false;
+          }
+        }
       });
       const allImagesValid = allImagesValidFileTypes && isValidImageUrls.every(Boolean);
 
