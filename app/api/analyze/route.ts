@@ -21,46 +21,24 @@ const responseSchema = z.object({
   canadianPercentage: z.number().min(0).max(100),
   confidence: z.number().min(0).max(1)
 })
-// Simple in-memory rate limiter (for demonstration; use Redis or similar for production)
-const rateLimitMap = new Map<string, { count: number; lastRequest: number }>();
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
-const RATE_LIMIT_MAX = 10; // max 10 requests per window
+import { RateLimiter } from '@/lib/rate-limiter'
 
-// Add cleanup mechanism
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitMap.entries()) {
-    if (now - entry.lastRequest > RATE_LIMIT_WINDOW_MS) {
-      rateLimitMap.delete(key);
-    }
-  }
-}, RATE_LIMIT_WINDOW_MS);
+const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
+const RATE_LIMIT_MAX = 10 // max 10 requests per window
 
 function getClientKey(req: Request): string {
-  // Use IP address or a header as a simple client key (for demonstration)
-  // In production, use a more robust method
-  const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
-  return ip;
+  const forwarded = req.headers.get('x-forwarded-for')
+  const realIp = req.headers.get('x-real-ip')
+  const ip = forwarded?.split(',')[0] || realIp || 'unknown'
+  
+  // Include API key in rate limit key if present to separate authenticated requests
+  const apiKey = req.headers.get('x-api-key')
+  return apiKey ? `${ip}:${apiKey}` : ip
 }
 
-function isRateLimited(clientKey: string) {
-  const now = Date.now();
-  const entry = rateLimitMap.get(clientKey);
-  if (!entry || now - entry.lastRequest > RATE_LIMIT_WINDOW_MS) {
-    // Clean up expired entry
-    if (entry && now - entry.lastRequest > RATE_LIMIT_WINDOW_MS) {
-      rateLimitMap.delete(clientKey);
-    }
-    rateLimitMap.set(clientKey, { count: 1, lastRequest: now });
-    return false;
-  }
-  if (entry.count >= RATE_LIMIT_MAX) {
-    return true;
-  }
-  entry.count++;
-  entry.lastRequest = now;
-  rateLimitMap.set(clientKey, entry);
-  return false;
+async function isRateLimited(clientKey: string): Promise<boolean> {
+  const limiter = RateLimiter.getInstance()
+  return limiter.isRateLimited(clientKey, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX)
 }
 
 function sanitizeInput(str: string): string {
@@ -96,7 +74,8 @@ export async function POST(req: Request) {
 
   // --- Rate Limiting ---
   const clientKey = getClientKey(req);
-  if (isRateLimited(clientKey)) {
+  const isLimited = await isRateLimited(clientKey);
+  if (isLimited) {
     return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }
   try {
