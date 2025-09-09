@@ -94,7 +94,7 @@ async function parseLLMResponse(
       if (retries > 0) {
         console.log(`Retrying fetch from OpenAI... (${retries} retries left)`);
         const newResponse = await fetchProducts(query)
-        return await parseLLMResponse(newResponse, openai, query, --retries);
+        return await parseLLMResponse(newResponse, openai, query, retries - 1);
       }
       console.error(`Failed to parse LLM response after retries.`);
       return [];
@@ -110,7 +110,7 @@ async function parseLLMResponse(
     if (retries > 0) {
       console.log(`Retrying fetch from OpenAI... (${retries} retries left)`);
       const newResponse = await fetchProducts(query)
-      return await parseLLMResponse(newResponse, openai, query, --retries);
+      return await parseLLMResponse(newResponse, openai, query, retries - 1);
     }
 
     console.error(`Failed to parse LLM response after retries.`);
