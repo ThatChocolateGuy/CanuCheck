@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { DOMCleanup } from '@/components/dom-cleanup'
 import "./globals.css";
 import { ThemeProvider } from "next-themes";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -38,7 +39,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <DOMCleanup />
-          {children}
+            <TooltipProvider delayDuration={200}>
+              {children}
+            </TooltipProvider>
         </ThemeProvider>
       </body>
     </html>
