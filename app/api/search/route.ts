@@ -10,7 +10,8 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
+  timeout: 45000, // 45 second timeout for OpenAI API calls
 })
 
 // Mock implementation for demonstration
@@ -108,7 +109,12 @@ async function parseLLMResponse(
 }
 
 async function fetchProducts(query: string) {
-  const response = await openai.responses.create({
+  // Set a timeout promise to race against the OpenAI call
+  const timeoutPromise = new Promise<OpenAI.Responses.Response>((_, reject) => {
+    setTimeout(() => reject(new Error('OpenAI request timeout after 40s')), 40000)
+  })
+  
+  const apiPromise = openai.responses.create({
     model: "gpt-5-mini",
     reasoning: {
       effort: "low", // Reduce reasoning effort to save tokens for output
@@ -125,7 +131,7 @@ async function fetchProducts(query: string) {
     ],
     instructions: `
                     You are an expert in Canadian-made products. Perform a FAST web search for products claiming to be Canadian-made.
-                    Find up to 5-8 products quickly. Prioritize speed over quantity.
+                    Find 3-5 products QUICKLY. Speed is critical.
 
                     Return results in JSON format (no markdown):
                     {
@@ -143,14 +149,16 @@ async function fetchProducts(query: string) {
                       }]
                     }
                     
-                    CRITICAL: Complete search within 15 seconds. Return what you find quickly rather than waiting for comprehensive results.
+                    CRITICAL: Complete search within 10 seconds. Return 3-5 products fast.
                     If fields are missing, exclude that product. Return empty array if no valid products found.
                     Valid JSON only - no markdown, no explanations, no incomplete responses.
                   `,
-    input: `Find Canadian-made products for: ${query}. Prioritize speed - return results within 15 seconds.`,
-    max_output_tokens: 3000, // Reduced for faster responses
+    input: `Find 3-5 Canadian-made products for: ${query}. URGENT: Return results within 10 seconds.`,
+    max_output_tokens: 2000, // Further reduced for faster responses
     parallel_tool_calls: true,
   });
+  
+  const response = await Promise.race([apiPromise, timeoutPromise]);
   
   console.log('OpenAI response structure:', JSON.stringify(response, null, 2));
   
@@ -164,20 +172,36 @@ async function fetchProducts(query: string) {
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const searchQuery = searchParams.get('q') ?? ''
+  try {
+    const { searchParams } = new URL(req.url)
+    const searchQuery = searchParams.get('q') ?? ''
 
-  // Hybrid search pattern
-  const results = await Promise.all([
-    searchEcommerceAPIs(searchQuery),
-    fetchProducts(searchQuery)
-  ])
+    if (!searchQuery) {
+      return NextResponse.json({ error: 'Search query is required' }, { status: 400 })
+    }
 
-  // console.log('Ecommerce results:', results[0])
-  // console.log('LLM response:', results[1])
-  const mergedResults = await mergeResults(results, searchQuery);
-  console.log('Merged results:', mergedResults)
-  return NextResponse.json(mergedResults);
+    // Hybrid search pattern with timeout handling
+    const results = await Promise.all([
+      searchEcommerceAPIs(searchQuery),
+      fetchProducts(searchQuery).catch(error => {
+        console.error('OpenAI fetch error:', error)
+        // Return empty response on timeout/error to allow graceful degradation
+        return { output_text: JSON.stringify({ products: [] }) } as OpenAI.Responses.Response
+      })
+    ])
+
+    // console.log('Ecommerce results:', results[0])
+    // console.log('LLM response:', results[1])
+    const mergedResults = await mergeResults(results, searchQuery);
+    console.log('Merged results:', mergedResults)
+    return NextResponse.json(mergedResults);
+  } catch (error) {
+    console.error('Search endpoint error:', error)
+    return NextResponse.json(
+      { error: 'An error occurred while searching for products' },
+      { status: 500 }
+    )
+  }
 }
 
 // type definition removed as it conflicts with imported type
