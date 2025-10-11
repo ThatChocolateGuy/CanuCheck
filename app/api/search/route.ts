@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60 // Max duration in seconds (60s for Hobby plan)
+export const maxDuration = 30 // Reduced to 30s - should complete much faster now
 
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('OPENAI_API_KEY environment variable is required')
@@ -11,7 +11,7 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  timeout: 45000, // 45 second timeout for OpenAI API calls
+  timeout: 20000, // 20 second timeout - much more aggressive
 })
 
 // Mock implementation for demonstration
@@ -40,11 +40,10 @@ async function searchEcommerceAPIs(_query: string): Promise<EcommerceProduct[]> 
 }
 
 async function mergeResults(
-  results: [EcommerceProduct[], OpenAI.Responses.Response],
-  query: string
+  results: [EcommerceProduct[], OpenAI.Responses.Response]
 ): Promise<EcommerceProduct[]> {
   const [ecommerceResults, llmResponse] = results
-  const llmProducts = await parseLLMResponse(llmResponse, openai, query)
+  const llmProducts = await parseLLMResponse(llmResponse)
   // console.log('LLM products:', llmProducts)
 
   // Deduplicate and combine results
@@ -55,19 +54,14 @@ async function mergeResults(
 }
 
 async function parseLLMResponse(
-  response: OpenAI.Responses.Response,
-  openai: OpenAI,
-  query: string,
-  retries = 3
+  response: OpenAI.Responses.Response
 ): Promise<EcommerceProduct[]> {
   const content = response.output_text;
-  // console.log('LLM response content:', content);
 
   if (!content) return [];
 
   try {
     const parsed = JSON.parse(content) as LLMProductResult;
-    // console.log('Parsed LLM response:', parsed);
     // Skip URL validation to avoid timeouts - trust OpenAI's web search results
     const validProducts = (parsed.products ?? []).filter((product): product is EcommerceProduct =>
       !!product.name &&
@@ -81,80 +75,41 @@ async function parseLLMResponse(
       id: p.id ?? `llm-${crypto.randomUUID()}`
     }));
 
-    // if no valid products, try searching again
-    if (validProducts.length === 0) {
-      console.log('No valid products found, retrying...');
-      if (retries > 0) {
-        console.log(`Retrying fetch from OpenAI... (${retries} retries left)`);
-        const newResponse = await fetchProducts(query)
-        return await parseLLMResponse(newResponse, openai, query, retries - 1);
-      }
-      console.error(`Failed to parse LLM response after retries.`);
-      return [];
-    }
-
+    // Return whatever we got - no retries to avoid timeouts
     return validProducts;
   } catch (error) {
     console.error('LLM parse error:', error);
-
-    if (retries > 0) {
-      console.log(`Retrying fetch from OpenAI... (${retries} retries left)`);
-      const newResponse = await fetchProducts(query)
-      return await parseLLMResponse(newResponse, openai, query, retries - 1);
-    }
-
-    console.error(`Failed to parse LLM response after retries.`);
+    // Return empty array instead of retrying
     return [];
   }
 }
 
 async function fetchProducts(query: string) {
-  // Set a timeout promise to race against the OpenAI call
+  // Set a much more aggressive timeout - 18 seconds max
   const timeoutPromise = new Promise<OpenAI.Responses.Response>((_, reject) => {
-    setTimeout(() => reject(new Error('OpenAI request timeout after 40s')), 40000)
+    setTimeout(() => reject(new Error('OpenAI request timeout after 18s')), 18000)
   })
   
   const apiPromise = openai.responses.create({
     model: "gpt-5-mini",
     reasoning: {
-      effort: "low", // Reduce reasoning effort to save tokens for output
+      effort: "low",
     },
     tools: [
       {
         type: "web_search_preview",
-        search_context_size: "low",
+        search_context_size: "low", // Minimal context for speed
         user_location: {
           country: "CA",
           type: "approximate",
         }
       },
     ],
-    instructions: `
-                    You are an expert in Canadian-made products. Perform a FAST web search for products claiming to be Canadian-made.
-                    Find 3-5 products QUICKLY. Speed is critical.
-
-                    Return results in JSON format (no markdown):
-                    {
-                      "products": [{ 
-                        "id": string,
-                        "name": string,
-                        "price": number,
-                        "available": boolean,
-                        "images": string[], // valid image URLs only
-                        "url": string, // product page URL
-                        "description": string,
-                        "manufacturer": string,
-                        "countries": [{ "code": string, "name": string, "percentage"?: number }],
-                        "canadianPercentage"?: number
-                      }]
-                    }
-                    
-                    CRITICAL: Complete search within 10 seconds. Return 3-5 products fast.
-                    If fields are missing, exclude that product. Return empty array if no valid products found.
-                    Valid JSON only - no markdown, no explanations, no incomplete responses.
-                  `,
-    input: `Find 3-5 Canadian-made products for: ${query}. URGENT: Return results within 10 seconds.`,
-    max_output_tokens: 2000, // Further reduced for faster responses
+    instructions: `Find 3 Canadian-made products. Return JSON only:
+{"products":[{"id":"","name":"","price":0,"available":true,"images":[""],"url":"","description":"","manufacturer":"","countries":[{"code":"CA","name":"Canada"}],"canadianPercentage":100}]}
+Complete in 8 seconds. No markdown. No explanations.`,
+    input: `${query} Canadian-made. Return 3 products in 8 seconds.`,
+    max_output_tokens: 1500,
     parallel_tool_calls: true,
   });
   
@@ -192,7 +147,7 @@ export async function GET(req: Request) {
 
     // console.log('Ecommerce results:', results[0])
     // console.log('LLM response:', results[1])
-    const mergedResults = await mergeResults(results, searchQuery);
+    const mergedResults = await mergeResults(results);
     console.log('Merged results:', mergedResults)
     return NextResponse.json(mergedResults);
   } catch (error) {
