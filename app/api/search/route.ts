@@ -66,44 +66,18 @@ async function parseLLMResponse(
   try {
     const parsed = JSON.parse(content) as LLMProductResult;
     // console.log('Parsed LLM response:', parsed);
-    // return products with only valid URLs (both product URL and image URLs) which return 200 status code
-    const validProducts = (await Promise.all(parsed.products?.map(async (product) => {
-      console.log('Validating product:', product);
-      const isValidProductUrl = await checkValidURLStatus(product.url);
-      const isValidImageUrls = await Promise.all((product.images ?? []).map(checkValidURLStatus));
-      const allImagesValidFileTypes = (product.images ?? []).every((imageUrl) => {
-        const validImageFileTypes = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
-        try {
-          // Try parsing as full URL first
-          const url = new URL(imageUrl);
-          // Get the pathname and extract extension
-          const pathname = url.pathname.toLowerCase();
-          const extension = pathname.substring(pathname.lastIndexOf('.')) || '';
-          return validImageFileTypes.has(extension);
-        } catch {
-          // If URL parsing fails, try parsing just the path portion
-          try {
-            const path = decodeURIComponent(imageUrl.split('?')[0].toLowerCase());
-            const extension = path.substring(path.lastIndexOf('.')) || '';
-            return validImageFileTypes.has(extension);
-          } catch {
-            // If all parsing fails, consider it invalid
-            return false;
-          }
-        }
-      });
-      const allImagesValid = allImagesValidFileTypes && isValidImageUrls.every(Boolean);
-
-      return isValidProductUrl && allImagesValid ? product : null;
-    }) || [])).filter((p): p is EcommerceProduct =>
-      p !== null &&
-      !!p.name &&
-      !!p.price &&
-      !!p.url &&
-      !!p.manufacturer &&
-      !!p.description &&
-      p.available !== undefined // removed strict check for canadianPercentage
-    );
+    // Skip URL validation to avoid timeouts - trust OpenAI's web search results
+    const validProducts = (parsed.products ?? []).filter((product): product is EcommerceProduct =>
+      !!product.name &&
+      !!product.price &&
+      !!product.url &&
+      !!product.manufacturer &&
+      !!product.description &&
+      product.available !== undefined
+    ).map(p => ({
+      ...p,
+      id: p.id ?? `llm-${crypto.randomUUID()}`
+    }));
 
     // if no valid products, try searching again
     if (validProducts.length === 0) {
@@ -117,10 +91,7 @@ async function parseLLMResponse(
       return [];
     }
 
-    return validProducts.map(p => ({
-      ...p,
-      id: p.id ?? `llm-${crypto.randomUUID()}`,
-    })) || [];
+    return validProducts;
   } catch (error) {
     console.error('LLM parse error:', error);
 
