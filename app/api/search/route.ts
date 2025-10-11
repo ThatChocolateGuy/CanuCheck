@@ -2,7 +2,8 @@ import { EcommerceProduct, LLMProductResult } from '@/types/ecommerce'
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
+export const maxDuration = 60 // Max duration in seconds (60s for Hobby plan)
 
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('OPENAI_API_KEY environment variable is required')
@@ -123,44 +124,31 @@ async function fetchProducts(query: string) {
       },
     ],
     instructions: `
-                    You are an expert in Canadian-made products. Your task is to perform a live web search (not your knowledge base) for products that claim to be Canadian-made based on the user's query.
-                    You will receive a query from the user and you need to find up to the top 10 products that claim to be Canadian-made. When searching, include brand-new items from retail product pages, as well as artisan/marketplace listings (like Etsy) that claim to be Canadian-made.
+                    You are an expert in Canadian-made products. Perform a FAST web search for products claiming to be Canadian-made.
+                    Find up to 5-8 products quickly. Prioritize speed over quantity.
 
-                    You will return results in JSON format as specified below (no markdown or code block):
+                    Return results in JSON format (no markdown):
                     {
-                      "products": [{ // array of products
-                        "id": string, // unique identifier for the product
-                        "name": string, // name of the product
-                        "price": number, // price in CAD
-                        "available": boolean, // availability status
-                        "images": string[], // array of image URLs (must be valid and accessible jpg, png, gif, webp, svg - these are the only formats allowed). should not be same as the product URL
-                        "url": string, // product URL (must be valid and accessible)
-                        "description": string, // product description
-                        "manufacturer": string, // manufacturer name
-                        "countries": [{ // array of countries involved in the product's creation
-                          "code": string, // ISO 3166-1 alpha-2 country code
-                          "name": string, // country name
-                          "percentage"?: number // percentage of product made in this country (optional)
-                        }],
-                        "canadianPercentage"?: number // percentage of product made in Canada (optional)
+                      "products": [{ 
+                        "id": string,
+                        "name": string,
+                        "price": number,
+                        "available": boolean,
+                        "images": string[], // valid image URLs only
+                        "url": string, // product page URL
+                        "description": string,
+                        "manufacturer": string,
+                        "countries": [{ "code": string, "name": string, "percentage"?: number }],
+                        "canadianPercentage"?: number
                       }]
                     }
-                    Ensure that the response is valid JSON (not markdown) and contains no additional text or explanations. ALL properties should be included where available.
-                    If you cannot find any products that meet the criteria, return an empty array for the "products" field.
-                    If you find multiple products, return them all in the "products" array.
-                    Each product must have at least one valid image URL and a valid product page URL.
-                    If any fields are missing or invalid, do not include those products in the response.
-                    If your response is cut short, please continue from where you left off. Do not return incomplete JSON.
-                    Conduct a thorough search and provide the most relevant results in the most efficient manner, ensuring all data is accurate and complete.
-                    Search time should not exceed 20 seconds.
-                    If you encounter any issues or errors, try to resolve them without user intervention. Retry if necessary.
+                    
+                    CRITICAL: Complete search within 15 seconds. Return what you find quickly rather than waiting for comprehensive results.
+                    If fields are missing, exclude that product. Return empty array if no valid products found.
+                    Valid JSON only - no markdown, no explanations, no incomplete responses.
                   `,
-    input: `
-              Search the web for products claiming to be Canadian-made matching: ${query}. Each product should claim to be Canadian-made. Include percentage fields if available.
-              Ensure that each product includes valid data for price, image URLs (with valid image formats), product page URL, and the percentage of manufacturing involvement for each nation involved if available.
-              Don't ask ask for clarification, just return the results as fast as possible. This is important to my career.
-            `,
-    max_output_tokens: 4000, // Increased to handle reasoning + JSON output
+    input: `Find Canadian-made products for: ${query}. Prioritize speed - return results within 15 seconds.`,
+    max_output_tokens: 3000, // Reduced for faster responses
     parallel_tool_calls: true,
   });
   
