@@ -189,10 +189,13 @@ async function fetchProducts(query: string) {
     max_output_tokens: 2000,
     parallel_tool_calls: true,
   });
-  // console.log('OpenAI response:', response);
+  
+  console.log('OpenAI response structure:', JSON.stringify(response, null, 2));
+  
   if (!response.output_text) {
-    console.error('No output text in OpenAI response');
-    throw new Error('No output text in OpenAI response');
+    console.error('No output text in OpenAI response. Full response:', response);
+    // Return empty response instead of throwing to allow graceful degradation
+    return { output_text: JSON.stringify({ products: [] }) } as OpenAI.Responses.Response;
   }
   console.log('OpenAI response content:', response.output_text);
   return response;
