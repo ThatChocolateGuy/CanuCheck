@@ -45,6 +45,10 @@ pnpm build        # Production build
 pnpm lint         # ESLint with Next.js config
 ```
 
+### Common Issues
+- **Lockfile sync errors on Vercel**: Delete `pnpm-lock.yaml` and run `pnpm install` to regenerate with current package.json versions
+- **Next.js canary versions**: Project uses Next.js 15 canary - ensure all Next.js related packages match versions
+
 ## Component Conventions
 
 ### UI Components (shadcn/ui)

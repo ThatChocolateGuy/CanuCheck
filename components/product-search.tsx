@@ -6,13 +6,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { GridIcon, ListIcon, SearchIcon } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import type { FormEvent } from "react"
 import { ProductGrid } from "./product-grid"
 import { Spinner } from "./ui/spinner"
 
 export function ProductSearch() {
-  const { query, results, search, analyze, analysis, isLoading } = useMCP()
+  const { results, search, isLoading } = useMCP()
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [localQuery, setLocalQuery] = useState("")
 

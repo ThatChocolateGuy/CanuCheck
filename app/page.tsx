@@ -1,5 +1,4 @@
 // app/page.tsx
-import { ProductGrid } from '@/components/product-grid'
 import { DOMCleanup } from '@/components/dom-cleanup'
 import { ProductSearch } from '@/components/product-search'
 

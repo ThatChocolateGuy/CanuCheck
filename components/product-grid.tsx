@@ -6,7 +6,7 @@ import { GridSkeleton } from './grid-skeleton'
 import { ProductCard } from './product-card'
 
 export function ProductGrid({ viewMode, isLoading }: { viewMode: "grid" | "list", isLoading: boolean }) {
-  const { query, results } = useMCP()
+  const { results } = useMCP()
   const [isMounted, setIsMounted] = React.useState(false)
 
   useHydrationFix(() => setIsMounted(true))
@@ -30,7 +30,7 @@ export function ProductGrid({ viewMode, isLoading }: { viewMode: "grid" | "list"
           </div>
         ) : (
           <div className="text-center py-12 text-muted-foreground">
-            {query ? "No products found" : "Search for Canadian products above"}
+            Search for Canadian products above
           </div>
         )
       }
@@ -40,5 +40,8 @@ export function ProductGrid({ viewMode, isLoading }: { viewMode: "grid" | "list"
 
 // Hydration workaround hook
 function useHydrationFix(effect: () => void) {
-  React.useEffect(effect, [])
+  React.useEffect(() => {
+    effect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Empty deps is intentional for mount-only effect
 }

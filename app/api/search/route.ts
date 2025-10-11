@@ -13,7 +13,8 @@ const openai = new OpenAI({
 })
 
 // Mock implementation for demonstration
-async function searchEcommerceAPIs(query: string): Promise<EcommerceProduct[]> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function searchEcommerceAPIs(_query: string): Promise<EcommerceProduct[]> {
   // Replace with actual API calls to:
   // - Shopify API
   // - Amazon Product Advertising API
