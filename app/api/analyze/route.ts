@@ -112,7 +112,7 @@ export async function POST(req: Request) {
     };
 
     const missingFields = Object.entries(requiredFields)
-      .filter(([_, value]) => value === undefined || value === null || value === '')
+      .filter(([, value]) => value === undefined || value === null || value === '')
       .map(([field]) => field);
 
     if (missingFields.length > 0) {
@@ -133,7 +133,8 @@ export async function POST(req: Request) {
     // Validate URL format
     try {
       new URL(rawBody.url);
-    } catch {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_) {
       return NextResponse.json({
         error: 'Validation failed',
         details: 'Invalid URL format'

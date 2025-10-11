@@ -86,7 +86,7 @@ export const useMCP = create<MCPState & MCPActions>()(immer((set) => ({
       let data;
       try {
         data = await res.json();
-      } catch (e) {
+      } catch {
         throw new Error('Failed to parse search results as JSON');
       }
 
@@ -147,8 +147,8 @@ export const useMCP = create<MCPState & MCPActions>()(immer((set) => ({
       let parsed: unknown;
       try {
         parsed = JSON.parse(rawBody);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
         throw new Error(`Analysis response parse error: ${msg}. Body: ${truncate(rawBody)}`);
       }
 
