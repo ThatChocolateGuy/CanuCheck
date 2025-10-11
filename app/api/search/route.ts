@@ -175,55 +175,6 @@ async function fetchProducts(query: string) {
   return response;
 }
 
-// HTTP Status Code Check function
-async function checkValidURLStatus(url: string, timeoutMs: number = 5000): Promise<boolean> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    // Try HEAD first, fall back to GET if HEAD fails
-    let response = await fetch(url, {
-      method: 'HEAD',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; CanuCheck/1.0; +https://canucheck.com)'
-      }
-    });
-    
-    // Some servers don't support HEAD, try GET if HEAD fails
-    if (!response.ok) {
-      const getController = new AbortController();
-      const getTimeoutId = setTimeout(() => getController.abort(), timeoutMs);
-      
-      response = await fetch(url, {
-        method: 'GET',
-        redirect: 'follow',
-        signal: getController.signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; CanuCheck/1.0; +https://canucheck.com)'
-        }
-      });
-      clearTimeout(getTimeoutId);
-    }
-    
-    clearTimeout(timeoutId);
-    return response.ok;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error) {
-      const isAbortError = error.name === 'AbortError';
-      console.error(
-        `Error checking URL status: ${url}`,
-        isAbortError ? `Request timed out after ${timeoutMs}ms` : error.message
-      );
-    }
-    // Be more lenient - if URL looks valid, assume it's accessible
-    // This prevents legitimate products from being filtered out due to CORS or server issues
-    return true; // Changed to true to be more permissive
-  }
-}
-
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const searchQuery = searchParams.get('q') ?? ''
