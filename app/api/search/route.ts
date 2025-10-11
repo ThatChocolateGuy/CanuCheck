@@ -138,6 +138,9 @@ async function parseLLMResponse(
 async function fetchProducts(query: string) {
   const response = await openai.responses.create({
     model: "gpt-5-mini",
+    reasoning: {
+      effort: "low", // Reduce reasoning effort to save tokens for output
+    },
     tools: [
       {
         type: "web_search_preview",
@@ -186,7 +189,7 @@ async function fetchProducts(query: string) {
               Ensure that each product includes valid data for price, image URLs (with valid image formats), product page URL, and the percentage of manufacturing involvement for each nation involved if available.
               Don't ask ask for clarification, just return the results as fast as possible. This is important to my career.
             `,
-    max_output_tokens: 2000,
+    max_output_tokens: 4000, // Increased to handle reasoning + JSON output
     parallel_tool_calls: true,
   });
   
