@@ -14,7 +14,7 @@ const ProductSchema = z.object({
   countries: z.array(z.object({
     code: z.string().length(2),
     name: z.string(),
-    percentage: z.number().min(0).max(100)
+    percentage: z.number().min(0).max(100).optional() // Made optional
   })),
   canadianPercentage: z.number().min(0).max(100).optional(),
   available: z.boolean().default(true)
