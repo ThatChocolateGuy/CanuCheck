@@ -11,7 +11,7 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  timeout: 20000, // 20 second timeout - much more aggressive
+  timeout: 25000, // 25 second timeout
 })
 
 // Mock implementation for demonstration
@@ -85,9 +85,9 @@ async function parseLLMResponse(
 }
 
 async function fetchProducts(query: string) {
-  // Set a much more aggressive timeout - 18 seconds max
+  // Set timeout slightly less than client timeout (25s)
   const timeoutPromise = new Promise<OpenAI.Responses.Response>((_, reject) => {
-    setTimeout(() => reject(new Error('OpenAI request timeout after 18s')), 18000)
+    setTimeout(() => reject(new Error('OpenAI request timeout after 23s')), 23000)
   })
   
   const apiPromise = openai.responses.create({
