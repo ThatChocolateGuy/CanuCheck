@@ -63,16 +63,40 @@ async function parseLLMResponse(
   try {
     const parsed = JSON.parse(content) as LLMProductResult;
     // Skip URL validation to avoid timeouts - trust OpenAI's web search results
-    const validProducts = (parsed.products ?? []).filter((product): product is EcommerceProduct =>
-      !!product.name &&
-      !!product.price &&
-      !!product.url &&
-      !!product.manufacturer &&
-      !!product.description &&
-      product.available !== undefined
-    ).map(p => ({
+    const validProducts = (parsed.products ?? []).filter((product): product is EcommerceProduct => {
+      // Basic field validation
+      if (!product.name || !product.price || !product.url || 
+          !product.manufacturer || !product.description || 
+          product.available === undefined) {
+        return false;
+      }
+      
+      // Validate images array exists and has at least one valid URL
+      if (!Array.isArray(product.images) || product.images.length === 0) {
+        console.warn(`Product "${product.name}" missing images array`);
+        return false;
+      }
+      
+      // Check for at least one non-empty image URL
+      const hasValidImage = product.images.some(img => 
+        typeof img === 'string' && img.trim() !== '' && 
+        (img.startsWith('http://') || img.startsWith('https://'))
+      );
+      
+      if (!hasValidImage) {
+        console.warn(`Product "${product.name}" has no valid image URLs`);
+        return false;
+      }
+      
+      return true;
+    }).map(p => ({
       ...p,
-      id: p.id ?? `llm-${crypto.randomUUID()}`
+      id: p.id ?? `llm-${crypto.randomUUID()}`,
+      // Filter out any empty/invalid image URLs
+      images: (p.images ?? []).filter(img => 
+        typeof img === 'string' && img.trim() !== '' && 
+        (img.startsWith('http://') || img.startsWith('https://'))
+      )
     }));
 
     // Return whatever we got - no retries to avoid timeouts
@@ -105,10 +129,10 @@ async function fetchProducts(query: string) {
         }
       },
     ],
-    instructions: `Find 3 Canadian-made products. Return JSON only:
-{"products":[{"id":"","name":"","price":0,"available":true,"images":[""],"url":"","description":"","manufacturer":"","countries":[{"code":"CA","name":"Canada"}],"canadianPercentage":100}]}
-Complete in 8 seconds. No markdown. No explanations.`,
-    input: `${query} Canadian-made. Return 3 products in 8 seconds.`,
+    instructions: `Find 3 Canadian-made products with valid product images. Return JSON only:
+{"products":[{"id":"string","name":"string","price":number,"available":true,"images":["https://valid-image-url.jpg","https://another-image.jpg"],"url":"https://product-page.com","description":"string","manufacturer":"string","countries":[{"code":"CA","name":"Canada"}],"canadianPercentage":100}]}
+CRITICAL: images array must contain valid image URLs from product pages. Complete in 8 seconds. No markdown.`,
+    input: `${query} Canadian-made products with images. Return 3 products in 8 seconds.`,
     max_output_tokens: 1500,
     parallel_tool_calls: true,
   });
