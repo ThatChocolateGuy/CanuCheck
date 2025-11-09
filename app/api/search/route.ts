@@ -2,14 +2,16 @@ import { EcommerceProduct, LLMProductResult } from '@/types/ecommerce'
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
+export const maxDuration = 30 // Reduced to 30s - should complete much faster now
 
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('OPENAI_API_KEY environment variable is required')
 }
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
+  timeout: 25000, // 25 second timeout
 })
 
 // Mock implementation for demonstration
@@ -38,11 +40,10 @@ async function searchEcommerceAPIs(_query: string): Promise<EcommerceProduct[]> 
 }
 
 async function mergeResults(
-  results: [EcommerceProduct[], OpenAI.Responses.Response],
-  query: string
+  results: [EcommerceProduct[], OpenAI.Responses.Response]
 ): Promise<EcommerceProduct[]> {
   const [ecommerceResults, llmResponse] = results
-  const llmProducts = await parseLLMResponse(llmResponse, openai, query)
+  const llmProducts = await parseLLMResponse(llmResponse)
   // console.log('LLM products:', llmProducts)
 
   // Deduplicate and combine results
@@ -53,192 +54,133 @@ async function mergeResults(
 }
 
 async function parseLLMResponse(
-  response: OpenAI.Responses.Response,
-  openai: OpenAI,
-  query: string,
-  retries = 3
+  response: OpenAI.Responses.Response
 ): Promise<EcommerceProduct[]> {
   const content = response.output_text;
-  // console.log('LLM response content:', content);
 
   if (!content) return [];
 
   try {
     const parsed = JSON.parse(content) as LLMProductResult;
-    // console.log('Parsed LLM response:', parsed);
-    // return products with only valid URLs (both product URL and image URLs) which return 200 status code
-    const validProducts = (await Promise.all(parsed.products?.map(async (product) => {
-      console.log('Validating product:', product);
-      const isValidProductUrl = await checkValidURLStatus(product.url);
-      const isValidImageUrls = await Promise.all((product.images ?? []).map(checkValidURLStatus));
-      const allImagesValidFileTypes = (product.images ?? []).every((imageUrl) => {
-        const validImageFileTypes = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']);
-        try {
-          // Try parsing as full URL first
-          const url = new URL(imageUrl);
-          // Get the pathname and extract extension
-          const pathname = url.pathname.toLowerCase();
-          const extension = pathname.substring(pathname.lastIndexOf('.')) || '';
-          return validImageFileTypes.has(extension);
-        } catch {
-          // If URL parsing fails, try parsing just the path portion
-          try {
-            const path = decodeURIComponent(imageUrl.split('?')[0].toLowerCase());
-            const extension = path.substring(path.lastIndexOf('.')) || '';
-            return validImageFileTypes.has(extension);
-          } catch {
-            // If all parsing fails, consider it invalid
-            return false;
-          }
-        }
-      });
-      const allImagesValid = allImagesValidFileTypes && isValidImageUrls.every(Boolean);
-
-      return isValidProductUrl && allImagesValid ? product : null;
-    }) || [])).filter((p): p is EcommerceProduct =>
-      p !== null &&
-      !!p.name &&
-      !!p.price &&
-      !!p.url &&
-      !!p.manufacturer &&
-      !!p.description &&
-      p.available !== undefined // removed strict check for canadianPercentage
-    );
-
-    // if no valid products, try searching again
-    if (validProducts.length === 0) {
-      console.log('No valid products found, retrying...');
-      if (retries > 0) {
-        console.log(`Retrying fetch from OpenAI... (${retries} retries left)`);
-        const newResponse = await fetchProducts(query)
-        return await parseLLMResponse(newResponse, openai, query, retries - 1);
+    // Skip URL validation to avoid timeouts - trust OpenAI's web search results
+    const validProducts = (parsed.products ?? []).filter((product): product is EcommerceProduct => {
+      // Basic field validation
+      if (!product.name || !product.price || !product.url || 
+          !product.manufacturer || !product.description || 
+          product.available === undefined) {
+        return false;
       }
-      console.error(`Failed to parse LLM response after retries.`);
-      return [];
-    }
-
-    return validProducts.map(p => ({
+      
+      // Validate images array exists and has at least one valid URL
+      if (!Array.isArray(product.images) || product.images.length === 0) {
+        console.warn(`Product "${product.name}" missing images array`);
+        return false;
+      }
+      
+      // Check for at least one non-empty image URL
+      const hasValidImage = product.images.some(img => 
+        typeof img === 'string' && img.trim() !== '' && 
+        (img.startsWith('http://') || img.startsWith('https://'))
+      );
+      
+      if (!hasValidImage) {
+        console.warn(`Product "${product.name}" has no valid image URLs`);
+        return false;
+      }
+      
+      return true;
+    }).map(p => ({
       ...p,
       id: p.id ?? `llm-${crypto.randomUUID()}`,
-    })) || [];
+      // Filter out any empty/invalid image URLs
+      images: (p.images ?? []).filter(img => 
+        typeof img === 'string' && img.trim() !== '' && 
+        (img.startsWith('http://') || img.startsWith('https://'))
+      )
+    }));
+
+    // Return whatever we got - no retries to avoid timeouts
+    return validProducts;
   } catch (error) {
     console.error('LLM parse error:', error);
-
-    if (retries > 0) {
-      console.log(`Retrying fetch from OpenAI... (${retries} retries left)`);
-      const newResponse = await fetchProducts(query)
-      return await parseLLMResponse(newResponse, openai, query, retries - 1);
-    }
-
-    console.error(`Failed to parse LLM response after retries.`);
+    // Return empty array instead of retrying
     return [];
   }
 }
 
 async function fetchProducts(query: string) {
-  const response = await openai.responses.create({
+  // Set timeout slightly less than client timeout (25s)
+  const timeoutPromise = new Promise<OpenAI.Responses.Response>((_, reject) => {
+    setTimeout(() => reject(new Error('OpenAI request timeout after 23s')), 23000)
+  })
+  
+  const apiPromise = openai.responses.create({
     model: "gpt-5-mini",
+    reasoning: {
+      effort: "low",
+    },
     tools: [
       {
         type: "web_search_preview",
-        search_context_size: "low",
+        search_context_size: "low", // Minimal context for speed
         user_location: {
           country: "CA",
           type: "approximate",
         }
       },
     ],
-    instructions: `
-                    You are an expert in Canadian-made products. Your task is to perform a live web search (not your knowledge base) for products that claim to be Canadian-made based on the user's query.
-                    You will receive a query from the user and you need to find up to the top 10 products that claim to be Canadian-made. When searching, include brand-new items from retail product pages, as well as artisan/marketplace listings (like Etsy) that claim to be Canadian-made.
-
-                    You will return results in JSON format as specified below (no markdown or code block):
-                    {
-                      "products": [{ // array of products
-                        "id": string, // unique identifier for the product
-                        "name": string, // name of the product
-                        "price": number, // price in CAD
-                        "available": boolean, // availability status
-                        "images": string[], // array of image URLs (must be valid and accessible jpg, png, gif, webp, svg - these are the only formats allowed). should not be same as the product URL
-                        "url": string, // product URL (must be valid and accessible)
-                        "description": string, // product description
-                        "manufacturer": string, // manufacturer name
-                        "countries": [{ // array of countries involved in the product's creation
-                          "code": string, // ISO 3166-1 alpha-2 country code
-                          "name": string, // country name
-                          "percentage"?: number // percentage of product made in this country (optional)
-                        }],
-                        "canadianPercentage"?: number // percentage of product made in Canada (optional)
-                      }]
-                    }
-                    Ensure that the response is valid JSON (not markdown) and contains no additional text or explanations. ALL properties should be included where available.
-                    If you cannot find any products that meet the criteria, return an empty array for the "products" field.
-                    If you find multiple products, return them all in the "products" array.
-                    Each product must have at least one valid image URL and a valid product page URL.
-                    If any fields are missing or invalid, do not include those products in the response.
-                    If your response is cut short, please continue from where you left off. Do not return incomplete JSON.
-                    Conduct a thorough search and provide the most relevant results in the most efficient manner, ensuring all data is accurate and complete.
-                    Search time should not exceed 20 seconds.
-                    If you encounter any issues or errors, try to resolve them without user intervention. Retry if necessary.
-                  `,
-    input: `
-              Search the web for products claiming to be Canadian-made matching: ${query}. Each product should claim to be Canadian-made. Include percentage fields if available.
-              Ensure that each product includes valid data for price, image URLs (with valid image formats), product page URL, and the percentage of manufacturing involvement for each nation involved if available.
-              Don't ask ask for clarification, just return the results as fast as possible. This is important to my career.
-            `,
-    max_output_tokens: 2000,
+    instructions: `Find 3 Canadian-made products with valid product images. Return JSON only:
+{"products":[{"id":"string","name":"string","price":number,"available":true,"images":["https://valid-image-url.jpg","https://another-image.jpg"],"url":"https://product-page.com","description":"string","manufacturer":"string","countries":[{"code":"CA","name":"Canada"}],"canadianPercentage":100}]}
+CRITICAL: images array must contain valid image URLs from product pages. Complete in 8 seconds. No markdown.`,
+    input: `${query} Canadian-made products with images. Return 3 products in 8 seconds.`,
+    max_output_tokens: 1500,
     parallel_tool_calls: true,
   });
-  // console.log('OpenAI response:', response);
+  
+  const response = await Promise.race([apiPromise, timeoutPromise]);
+  
+  console.log('OpenAI response structure:', JSON.stringify(response, null, 2));
+  
   if (!response.output_text) {
-    console.error('No output text in OpenAI response');
-    throw new Error('No output text in OpenAI response');
+    console.error('No output text in OpenAI response. Full response:', response);
+    // Return empty response instead of throwing to allow graceful degradation
+    return { output_text: JSON.stringify({ products: [] }) } as OpenAI.Responses.Response;
   }
   console.log('OpenAI response content:', response.output_text);
   return response;
 }
 
-// HTTP Status Code Check function
-async function checkValidURLStatus(url: string, timeoutMs: number = 3000): Promise<boolean> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      method: 'HEAD',
-      redirect: 'follow',
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    return response.ok;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error) {
-      const isAbortError = error.name === 'AbortError';
-      console.error(
-        `Error checking URL status: ${url}`,
-        isAbortError ? `Request timed out after ${timeoutMs}ms` : error.message
-      );
-    }
-    return false;
-  }
-}
-
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const searchQuery = searchParams.get('q') ?? ''
+  try {
+    const { searchParams } = new URL(req.url)
+    const searchQuery = searchParams.get('q') ?? ''
 
-  // Hybrid search pattern
-  const results = await Promise.all([
-    searchEcommerceAPIs(searchQuery),
-    fetchProducts(searchQuery)
-  ])
+    if (!searchQuery) {
+      return NextResponse.json({ error: 'Search query is required' }, { status: 400 })
+    }
 
-  // console.log('Ecommerce results:', results[0])
-  // console.log('LLM response:', results[1])
-  const mergedResults = await mergeResults(results, searchQuery);
-  console.log('Merged results:', mergedResults)
-  return NextResponse.json(mergedResults);
+    // Hybrid search pattern with timeout handling
+    const results = await Promise.all([
+      searchEcommerceAPIs(searchQuery),
+      fetchProducts(searchQuery).catch(error => {
+        console.error('OpenAI fetch error:', error)
+        // Return empty response on timeout/error to allow graceful degradation
+        return { output_text: JSON.stringify({ products: [] }) } as OpenAI.Responses.Response
+      })
+    ])
+
+    // console.log('Ecommerce results:', results[0])
+    // console.log('LLM response:', results[1])
+    const mergedResults = await mergeResults(results);
+    console.log('Merged results:', mergedResults)
+    return NextResponse.json(mergedResults);
+  } catch (error) {
+    console.error('Search endpoint error:', error)
+    return NextResponse.json(
+      { error: 'An error occurred while searching for products' },
+      { status: 500 }
+    )
+  }
 }
 
 // type definition removed as it conflicts with imported type
