@@ -129,6 +129,7 @@ async function fetchProducts(query: string) {
         }
       },
     ],
+    tool_choice: { type: "web_search_preview" },
     instructions: `Find 3 Canadian-made products with valid product images. Return JSON only:
 {"products":[{"id":"string","name":"string","price":number,"available":true,"images":["https://valid-image-url.jpg","https://another-image.jpg"],"url":"https://product-page.com","description":"string","manufacturer":"string","countries":[{"code":"CA","name":"Canada"}],"canadianPercentage":100}]}
 CRITICAL: images array must contain valid image URLs from product pages. Complete in 8 seconds. No markdown.`,
