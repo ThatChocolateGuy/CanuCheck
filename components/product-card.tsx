@@ -43,6 +43,13 @@ export function ProductCard({
                   src={imageUrl && imageUrl.trim() !== '' ? imageUrl : "https://placehold.co/600x400"}
                   alt={`Product image ${index + 1}`}
                   className="w-full h-auto object-cover rounded-md"
+                  onError={(e) => {
+                    // Fallback to placeholder if image fails to load
+                    const target = e.currentTarget;
+                    if (target.src !== "https://placehold.co/600x400") {
+                      target.src = "https://placehold.co/600x400";
+                    }
+                  }}
                 />
               </CarouselItem>
             ))}
