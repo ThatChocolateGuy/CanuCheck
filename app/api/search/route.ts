@@ -39,6 +39,43 @@ async function searchEcommerceAPIs(_query: string): Promise<EcommerceProduct[]> 
   ])
 }
 
+// Validate if an image URL is accessible and returns an image
+async function isValidImageUrl(url: string): Promise<boolean> {
+  try {
+    // Basic URL validation
+    const urlObj = new URL(url);
+    if (!['http:', 'https:'].includes(urlObj.protocol)) {
+      return false;
+    }
+
+    // Attempt to fetch with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
+    
+    const response = await fetch(url, {
+      method: 'HEAD', // Use HEAD to avoid downloading the full image
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; CanuCheck/1.0)',
+      },
+    });
+    
+    clearTimeout(timeoutId);
+    
+    // Check if response is OK and content-type is an image
+    if (!response.ok) {
+      return false;
+    }
+    
+    const contentType = response.headers.get('content-type') || '';
+    return contentType.startsWith('image/');
+  } catch (error) {
+    // Log validation failures for debugging
+    console.warn(`Image URL validation failed for ${url}:`, error instanceof Error ? error.message : 'Unknown error');
+    return false;
+  }
+}
+
 async function mergeResults(
   results: [EcommerceProduct[], OpenAI.Responses.Response]
 ): Promise<EcommerceProduct[]> {
@@ -62,8 +99,9 @@ async function parseLLMResponse(
 
   try {
     const parsed = JSON.parse(content) as LLMProductResult;
-    // Skip URL validation to avoid timeouts - trust OpenAI's web search results
-    const validProducts = (parsed.products ?? []).filter((product): product is EcommerceProduct => {
+    
+    // First pass: Basic field validation
+    const candidateProducts = (parsed.products ?? []).filter((product): product is EcommerceProduct => {
       // Basic field validation
       if (!product.name || !product.price || !product.url || 
           !product.manufacturer || !product.description || 
@@ -89,18 +127,40 @@ async function parseLLMResponse(
       }
       
       return true;
-    }).map(p => ({
-      ...p,
-      id: p.id ?? `llm-${crypto.randomUUID()}`,
-      // Filter out any empty/invalid image URLs
-      images: (p.images ?? []).filter(img => 
-        typeof img === 'string' && img.trim() !== '' && 
-        (img.startsWith('http://') || img.startsWith('https://'))
-      )
-    }));
+    });
 
-    // Return whatever we got - no retries to avoid timeouts
-    return validProducts;
+    // Second pass: Validate images are actually accessible
+    const validatedProducts = await Promise.all(
+      candidateProducts.map(async (product): Promise<EcommerceProduct | null> => {
+        const imageUrls = (product.images ?? []).filter(img => 
+          typeof img === 'string' && img.trim() !== '' && 
+          (img.startsWith('http://') || img.startsWith('https://'))
+        );
+        
+        // Validate each image URL in parallel with a limit
+        const validationResults = await Promise.all(
+          imageUrls.map(url => isValidImageUrl(url))
+        );
+        
+        // Keep only images that passed validation
+        const validImages = imageUrls.filter((_, index) => validationResults[index]);
+        
+        // Return product with validated images, or null if no valid images remain
+        if (validImages.length === 0) {
+          console.warn(`Product "${product.name}" has no accessible images after validation`);
+          return null;
+        }
+        
+        return {
+          ...product,
+          id: product.id ?? `llm-${crypto.randomUUID()}`,
+          images: validImages
+        } as EcommerceProduct;
+      })
+    );
+
+    // Filter out products that failed image validation
+    return validatedProducts.filter((p): p is EcommerceProduct => p !== null);
   } catch (error) {
     console.error('LLM parse error:', error);
     // Return empty array instead of retrying
@@ -130,10 +190,15 @@ async function fetchProducts(query: string) {
       },
     ],
     tool_choice: { type: "web_search_preview" },
-    instructions: `Find 3 Canadian-made products with valid product images. Return JSON only:
+    instructions: `Find 3 Canadian-made products with CURRENT pricing and valid product images. Return JSON only:
 {"products":[{"id":"string","name":"string","price":number,"available":true,"images":["https://valid-image-url.jpg","https://another-image.jpg"],"url":"https://product-page.com","description":"string","manufacturer":"string","countries":[{"code":"CA","name":"Canada"}],"canadianPercentage":100}]}
-CRITICAL: images array must contain valid image URLs from product pages. Complete in 8 seconds. No markdown.`,
-    input: `${query} Canadian-made products with images. Return 3 products in 8 seconds.`,
+CRITICAL REQUIREMENTS:
+1. Extract CURRENT price directly from the product page (not cached/outdated prices)
+2. Verify price matches what's shown on the actual product URL
+3. Include direct image URLs from product pages (not thumbnails)
+4. All image URLs must be publicly accessible
+Complete in 8 seconds. No markdown.`,
+    input: `${query} Canadian-made products. Find current prices and valid images from product pages. Return 3 products in 8 seconds.`,
     max_output_tokens: 1500,
     parallel_tool_calls: true,
   });
