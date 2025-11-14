@@ -76,30 +76,102 @@ export const useMCP = create<MCPState & MCPActions>()(immer((set) => ({
     });
 
     try {
-      // Fetch results
+      // Fetch with streaming support
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`)
       if (!res.ok) {
         throw new Error(`Search failed: ${res.status} ${res.statusText}`);
       }
 
-      // Parse JSON response
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error('Failed to parse search results as JSON');
-      }
+      // Check if response is streaming
+      const contentType = res.headers.get('content-type')
+      if (contentType?.includes('text/event-stream')) {
+        // Handle Server-Sent Events stream
+        const reader = res.body?.getReader()
+        const decoder = new TextDecoder()
+        
+        if (!reader) {
+          throw new Error('Failed to get response reader')
+        }
 
-      // Validate response data
-      const parseResult = ProductSchema.array().safeParse(data);
-      if (!parseResult.success) {
-        throw new Error(`Invalid search results: ${parseResult.error.message}`);
-      }
+        let buffer = ''
+        const accumulatedProducts: z.infer<typeof ProductSchema>[] = []
+        
+        while (true) {
+          const { done, value } = await reader.read()
+          
+          if (done) break
+          
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n\n')
+          buffer = lines.pop() || '' // Keep incomplete line in buffer
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6) // Remove 'data: ' prefix
+              
+              if (data === '[DONE]') {
+                // Stream complete
+                continue
+              }
+              
+              try {
+                const parsed = JSON.parse(data)
+                
+                // Handle error messages
+                if (parsed.error) {
+                  console.error('Stream error:', parsed.error)
+                  continue
+                }
+                
+                // Validate and accumulate products
+                if (Array.isArray(parsed)) {
+                  for (const product of parsed) {
+                    const parseResult = ProductSchema.safeParse(product)
+                    if (parseResult.success) {
+                      // Check for duplicates
+                      const isDuplicate = accumulatedProducts.some(p => p.name === parseResult.data.name)
+                      if (!isDuplicate) {
+                        accumulatedProducts.push(parseResult.data)
+                        
+                        // Update state with new product immediately (streaming effect)
+                        set(state => {
+                          state.results = [...accumulatedProducts]
+                        })
+                      }
+                    }
+                  }
+                }
+              } catch (parseError) {
+                console.warn('Failed to parse streaming data:', parseError)
+              }
+            }
+          }
+        }
+        
+        // Final update with all accumulated products
+        set(state => {
+          state.results = accumulatedProducts
+        })
+      } else {
+        // Fallback to regular JSON response
+        let data
+        try {
+          data = await res.json()
+        } catch {
+          throw new Error('Failed to parse search results as JSON')
+        }
 
-      // Update state with validated results
-      set(state => {
-        state.results = parseResult.data;
-      });
+        // Validate response data
+        const parseResult = ProductSchema.array().safeParse(data)
+        if (!parseResult.success) {
+          throw new Error(`Invalid search results: ${parseResult.error.message}`)
+        }
+
+        // Update state with validated results
+        set(state => {
+          state.results = parseResult.data
+        })
+      }
     } catch (error) {
       // Handle all errors consistently
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';

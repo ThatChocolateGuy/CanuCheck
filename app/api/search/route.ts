@@ -2,7 +2,7 @@ import { EcommerceProduct, LLMProductResult } from '@/types/ecommerce'
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-export const runtime = 'nodejs'
+export const runtime = 'edge' // Use edge runtime for streaming support
 export const maxDuration = 30 // Reduced to 30s - should complete much faster now
 
 if (!process.env.OPENAI_API_KEY) {
@@ -37,20 +37,6 @@ async function searchEcommerceAPIs(_query: string): Promise<EcommerceProduct[]> 
     //   available: true
     // }
   ])
-}
-
-async function mergeResults(
-  results: [EcommerceProduct[], OpenAI.Responses.Response]
-): Promise<EcommerceProduct[]> {
-  const [ecommerceResults, llmResponse] = results
-  const llmProducts = await parseLLMResponse(llmResponse)
-  // console.log('LLM products:', llmProducts)
-
-  // Deduplicate and combine results
-  return [...ecommerceResults, ...llmProducts].filter(
-    (product, index, self) =>
-      self.findIndex(p => p.name === product.name) === index
-  )
 }
 
 async function parseLLMResponse(
@@ -200,21 +186,63 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Search query is required' }, { status: 400 })
     }
 
-    // Hybrid search pattern with timeout handling
-    const results = await Promise.all([
-      searchEcommerceAPIs(searchQuery),
-      fetchProducts(searchQuery).catch(error => {
-        console.error('OpenAI fetch error:', error)
-        // Return empty response on timeout/error to allow graceful degradation
-        return { output_text: JSON.stringify({ products: [] }) } as OpenAI.Responses.Response
-      })
-    ])
+    // Create a ReadableStream for Server-Sent Events
+    const encoder = new TextEncoder()
+    
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          // Helper function to send SSE data
+          const sendEvent = (data: EcommerceProduct[]) => {
+            const message = `data: ${JSON.stringify(data)}\n\n`
+            controller.enqueue(encoder.encode(message))
+          }
 
-    // console.log('Ecommerce results:', results[0])
-    // console.log('LLM response:', results[1])
-    const mergedResults = await mergeResults(results);
-    console.log('Merged results:', mergedResults)
-    return NextResponse.json(mergedResults);
+          // Start both searches in parallel
+          const ecommercePromise = searchEcommerceAPIs(searchQuery)
+          const llmPromise = fetchProducts(searchQuery).catch(error => {
+            console.error('OpenAI fetch error:', error)
+            return { output_text: JSON.stringify({ products: [] }) } as OpenAI.Responses.Response
+          })
+
+          // Send ecommerce results as soon as they're available
+          const ecommerceResults = await ecommercePromise
+          if (ecommerceResults.length > 0) {
+            console.log('Streaming ecommerce results:', ecommerceResults.length)
+            sendEvent(ecommerceResults)
+          }
+
+          // Parse and send LLM results as they become available
+          const llmResponse = await llmPromise
+          const llmProducts = await parseLLMResponse(llmResponse)
+          
+          if (llmProducts.length > 0) {
+            console.log('Streaming LLM products:', llmProducts.length)
+            // Send each product individually for progressive loading
+            for (const product of llmProducts) {
+              sendEvent([product])
+            }
+          }
+
+          // Send completion signal
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          controller.close()
+        } catch (error) {
+          console.error('Stream error:', error)
+          const errorMessage = `data: ${JSON.stringify({ error: 'Search failed' })}\n\n`
+          controller.enqueue(encoder.encode(errorMessage))
+          controller.close()
+        }
+      }
+    })
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    })
   } catch (error) {
     console.error('Search endpoint error:', error)
     return NextResponse.json(
